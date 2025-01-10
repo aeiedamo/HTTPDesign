@@ -53,6 +53,16 @@ void http_404_reply(int socketID) {
     write_content_to_socket(socketID, content);
 }
 
+void http_get_reply(int socketID, const char *content) {
+    if (!content) {
+        printf("[ERROR]: content wasn't found\n");
+        return;
+    }
+
+    write_len_to_socket(socketID, "HTTP/1.1 200 OK");
+    write_content_to_socket(socketID, content);
+}
+
 int is_get(char *text) {
     if (!text) {
         printf("[ERROR]: No text was found\n");
@@ -123,6 +133,10 @@ char *read_file(FILE *file){
     return (buffer);
 }
 
+/**
+ * This function extracts the query information before sending them to cgi bin
+ */
+
 request_pair extract_query(const char *cgipath) {
     request_pair rtn;
     char *query = NULL;
@@ -158,7 +172,179 @@ request_pair extract_query(const char *cgipath) {
 }
 
 
+void run_cgi(int socketID, const char *currentDIR, const char *cgipath) {
+    char *full_path = NULL, *param = NULL, *result = NULL;
+    request_pair req;
+    FILE *file;
+
+    if (!currentDIR || !cgipath) {
+        printf("[ERROR]: Problem with the paths\n");
+        return;
+    }
+
+    req = extract_query(cgipath);
+
+    if (req.query) {
+        param = malloc(strlen(req.query) + 100);
+        sprintf(param, "QUERY_STRING=%s\n", req.query);
+    }
+    else {
+        param = strdup(" ");
+    }
+
+    if (ends_with(req.path, ".py")) {
+        full_path = concat4(param, "python ", currentDIR, req.path);
+    } else {
+        full_path = concat3(param, currentDIR, req.path);
+    }
+
+    free(param);
+    free(req.path);
+    free(req.query);
+
+    printf("Executing: [%s]...\n", full_path);
+
+    file = popen(full_path, "r");
+    free(full_path);
+
+    if (!file) {
+        perror("[ERROR]: popen can't function\n");
+        http_404_reply(socketID);
+    }
+    else {
+        result = read_file(file);
+        http_get_reply(socketID, result);
+        free(result);
+    }
+}
+
+void output_static_file(int socketID, const char *currentDIR, const char *path){
+    char *full_path = NULL, *result = NULL;
+    FILE *file;
+
+    if (!currentDIR || !path) {
+        printf("[ERROR: problem with path\n");
+        return;
+    }
+
+    full_path = malloc(strlen(currentDIR) + strlen(path) + 1);
+    strcpy(full_path, currentDIR);
+    strcat(full_path, path);
+
+    printf("Opening static file: [%s]\n", full_path);
+
+    file = fopen(full_path, "r");
+    if (!file) {
+        printf("[ERROR]: error with file\n");
+        http_404_reply(socketID);
+    }
+    else {
+        result = read_file(file);
+        http_get_reply(socketID, result);
+        free(result);
+    }
+}
+
+void *handle_socket_thread(void *socketID_arg) {
+    int socketID = *((int *)socketID_arg);
+    char *text = NULL;
+    char currentDIR[MAX_CWD];
+    char *path = NULL;
+
+    printf("Handling socket: %d\n", socketID);
+
+    text = read_text_from_socket(socketID);
+    printf("From socket %s\n\n", text);
+
+    if (is_get(text)) {
+        if (!getcwd(currentDIR, MAX_CWD)) {
+            printf("[ERROR]: can't access current directory");
+            return (NULL);
+        }
+
+        path = get_path(text);
+
+        if (is_cgibin_request(path)) {
+            run_cgi(socketID, currentDIR, path);
+        } else {
+            printf("cwd[%s]\n", currentDIR);
+            printf("path[%s]\n", path);
+            output_static_file(socketID, currentDIR, path);
+        }
+
+        free(path);
+    } else {
+        http_404_reply(socketID);
+    }
+
+    free(text);
+    close(socketID);
+    free(socketID_arg);
+
+    return (NULL);
+}
+
+int create_listen_socket() {
+    int socketID = socket(AF_INET, SOCK_STREAM, 0);
+    int setopt = 1;
+    struct sockaddr_in server_address;
+    uint16_t port = 8000;
+
+    if (socketID < 0) {
+        printf("[ERROR]: problem with opening socket\n");
+        return (-1);
+    }
+
+    if (-1 == setsockopt(socketID, SOL_SOCKET, SO_REUSEADDR, \
+    (char *)&setopt, sizeof(setopt))) {
+        printf("[ERROR]: problem while socket options\n");
+        return (-1);
+    }
+
+    while (1) {
+        bzero(&server_address, sizeof(server_address));
+        server_address.sin_family = AF_INET;
+        server_address.sin_port = htons(port);
+        server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+
+
+        if (bind(socketID, (struct sockaddr_in *)&server_address, sizeof(server_address)) < 0) {
+            port++;
+        } else {
+            break;
+        }
+    }
+
+    if (listen(socketID, SOMAXCONN) < 0)
+        error("Couldn't listen");
+
+    printf("Running on port %d\n", port);
+
+    return (socketID);
+}
 
 int main() {
+    int socketID = create_listen_socket();
+    struct sockaddr_in client_address;
+    int cli_len = sizeof(client_address);
+    struct thread_pool *pool = pool_init(4);
+    int newsocketID;
+    int *arg;
+
+    while (1) {
+        newsocketID = accept(socketID, (struct sockaddr_in *)&client_address,\
+        (socklen_t *)&cli_len);
+
+        if (newsocketID < 0)
+            error("Error on accept\n");
+
+        printf("New socket: %d\n", newsocketID);
+
+        arg = malloc(sizeof(int));
+        arg = newsocketID;
+        pool_add_task(pool, handle_socket_thread, arg);
+    }
+
+    close(socketID);
     return (0);
 }
