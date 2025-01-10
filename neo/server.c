@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -150,8 +151,41 @@ void update_statistics(Request *req) {
 }
 
 double get_time_diff(struct timeval start, struct timeval end) {
-  return (end.tv_sec - start.tv_sec) + 
+  return (end.tv_sec - start.tv_sec) +
   (end.tv_usec - start.tv_usec) / 1000000.0;
+}
+
+void print_server_stats()
+{
+  pthread_mutex_lock(&pool->buffer_mutex);
+
+  printf("\n=== Server Statistics ===\n");
+  printf("Total Threads: %d\n", pool->stats.thread_count);
+  printf("Current Thread ID: %lu\n", pool->stats.thread_id);
+  printf("Buffer Size: %d\n", pool->buffer_size);
+  printf("Current Buffer Count: %d\n", pool->buffer_count);
+  printf("Scheduling Algorithm: %s\n", pool->scheduling_alg);
+
+  pthread_mutex_unlock(&pool->buffer_mutex);
+}
+
+volatile sig_atomic_t server_running = 1;
+
+void *input_monitor(void *arg)
+{
+  char input;
+  while (server_running)
+  {
+    input = getchar();
+    if (input == 'q' || input == 'Q')
+    {
+      server_running = 0;
+      printf("\nShutting down server...\n");
+      break;
+    }
+  }
+  print_server_stats();
+  return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -197,7 +231,11 @@ int main(int argc, char *argv[]) {
 
   printf("Server listening on port %d...\n", port);
 
-  while (1) {
+  pthread_t input_thread;
+  pthread_create(&input_thread, NULL, input_monitor, NULL);
+
+  while (server_running)
+  {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
@@ -238,6 +276,10 @@ int main(int argc, char *argv[]) {
       pthread_mutex_unlock(&pool->buffer_mutex);
     }
   }
+
+  close(server_socket);
+  pthread_join(input_thread, NULL);
+  printf("Server shutdown complete.\n");
 
   return 0;
 }
