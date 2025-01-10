@@ -1,5 +1,36 @@
 #include "included.h"
 
+char *read_text_from_socket(int sockfd)
+{
+    const int BUF_SIZE = 256;
+    char *buffer = malloc(BUF_SIZE);
+
+    char *result = malloc(1);
+    result[0] = '\0';
+
+    int n;
+    while (1)
+    {
+        int n = read(sockfd, buffer, BUF_SIZE - 1);
+        if (n < 0)
+        {
+            perror("Error reading from socket");
+        }
+        buffer[n] = '\0';
+        char *last_result = result;
+        result = strappend(last_result, buffer);
+        free(last_result);
+        if (n < BUF_SIZE - 1)
+        {
+            break;
+        }
+    }
+
+    free(buffer);
+
+    return result;
+}
+
 /**
  * This function is used to write length of a content message to the socket
 */
@@ -19,7 +50,7 @@ void write_len_to_socket(int socketID, const char* message) {
 */
 
 void write_content_to_socket(int socketID, const char *content) {
-    int length_str[100];
+    char length_str[100];
     char *content_length_str = NULL;
 
     if (!content)
@@ -86,7 +117,7 @@ char *get_path(char *text) {
     }
 
     start_position = strlen(GET) + 1;
-    end_path = strchr(text + start_position, " ");
+    end_path = strchr(text + start_position, ' ');
     end_position = end_path - text;
 
     path_length = end_position - start_position;
@@ -99,7 +130,7 @@ char *get_path(char *text) {
 }
 
 int is_cgibin_request(const char *path) {
-    if (!path || !(contains(contains(path, '/cgi-bin/'))))
+    if (!path || !(contains(path, "/cgi-bin/")))
         return 0;
 
     return 1;
@@ -145,7 +176,7 @@ request_pair extract_query(const char *cgipath) {
 
     if (!cgipath) {
         printf("[ERROR: CGI path not found\n");
-        return;
+        exit(1);
     }
 
     query = strchr(cgipath, '?');
@@ -193,7 +224,7 @@ void run_cgi(int socketID, const char *currentDIR, const char *cgipath) {
     }
 
     if (ends_with(req.path, ".py")) {
-        full_path = concat4(param, "python ", currentDIR, req.path);
+        full_path = concat4(param, "python3 ", currentDIR, req.path);
     } else {
         full_path = concat3(param, currentDIR, req.path);
     }
@@ -308,7 +339,7 @@ int create_listen_socket() {
         server_address.sin_addr.s_addr = htonl(INADDR_ANY);
 
 
-        if (bind(socketID, (struct sockaddr_in *)&server_address, sizeof(server_address)) < 0) {
+        if (bind(socketID, (struct sockaddr *)&server_address, sizeof(server_address)) < 0) {
             port++;
         } else {
             break;
@@ -316,7 +347,7 @@ int create_listen_socket() {
     }
 
     if (listen(socketID, SOMAXCONN) < 0)
-        error("Couldn't listen");
+        perror("Couldn't listen");
 
     printf("Running on port %d\n", port);
 
@@ -332,16 +363,16 @@ int main() {
     int *arg;
 
     while (1) {
-        newsocketID = accept(socketID, (struct sockaddr_in *)&client_address,\
+        newsocketID = accept(socketID, (struct sockaddr *)&client_address,\
         (socklen_t *)&cli_len);
 
         if (newsocketID < 0)
-            error("Error on accept\n");
+            perror("Error on accept\n");
 
         printf("New socket: %d\n", newsocketID);
 
         arg = malloc(sizeof(int));
-        arg = newsocketID;
+        *arg = newsocketID;
         pool_add_task(pool, handle_socket_thread, arg);
     }
 

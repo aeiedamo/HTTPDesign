@@ -14,7 +14,7 @@ char *read_text_from_socket(int sockfd)
         int n = read(sockfd, buffer, BUF_SIZE - 1);
         if (n < 0)
         {
-            error("Error reading from socket");
+            perror("Error reading from socket");
         }
         buffer[n] = '\0';
         char *last_result = result;
@@ -35,7 +35,7 @@ void write_to_socket(int sockfd, const char *message)
 {
     if (write(sockfd, message, strlen(message)) == -1)
     {
-        error("write_to_socket");
+        perror("write_to_socket");
     }
 }
 
@@ -56,17 +56,17 @@ int main(int argc, char **argv) {
     port = 8000;
 
     if (socketID == -1) {
-        error("[ERROR]: a problem with socket\n");
+        perror("[ERROR]: a problem with socket\n");
     }
 
     server_address.sin_family = AF_INET;
     server_address.sin_port = htons(port);
-    server_address.sin_addr = htonl(INADDR_LOOPBACK);
+    server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
 
-    if (connect(socketID, (struct sockaddr_in *)&server_address, \
+    if (connect(socketID, (struct sockaddr *)&server_address, \
     sizeof(struct sockaddr_in)) == -1) {
-        error("[ERROR]: problem while connection");
+        perror("[ERROR]: problem while connection");
     }
 
     get_str = malloc(128 + strlen(url));
